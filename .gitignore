@@ -1,0 +1,27 @@
+# Virtual environments
+*_venv/
+.venv/
+venv/
+env/
+.env
+
+# SQLite databases and checkpoints
+*.db
+*.db-*
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Ignore AI assistant project
+langgraph_chatbot/Multi-Source_AI_Assistant/
+
+# OS / editor files
+.vscode/
+.idea/
+
+__pycache__/
+*.py[cod]
+*_venv/
+*.db
+
+* copy.py

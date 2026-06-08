@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  postgres_ltm_store:
+    image: postgres:16
+    
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres_ltm_store
+    ports:
+      - "5442:5432"
+    volumes:
+      - postgres_ltm_data:/var/lib/postgresql/data
+
+  postgres_chatbot:
+    image: postgres:16
+    
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres_chatbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_chatbot_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_ltm_data:
+  postgres_chatbot_data:

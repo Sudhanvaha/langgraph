@@ -1,0 +1,187 @@
+# backend.py
+
+from typing import TypedDict, Annotated
+
+import requests
+from dotenv import load_dotenv
+
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.tools import tool
+from langchain_groq import ChatGroq
+
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt, Command
+
+load_dotenv()
+
+# -------------------------
+# 1. LLM
+# -------------------------
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile"
+)
+
+# -------------------------
+# 2. Tools
+# -------------------------
+
+@tool
+def get_stock_price(symbol: str) -> dict:
+    """
+    Fetch latest stock price using Alpha Vantage.
+    """
+
+    try:
+        url = (
+            "https://www.alphavantage.co/query"
+            f"?function=GLOBAL_QUOTE&symbol={symbol}&apikey=C9PE94QUEW9VWGFM"
+        )
+
+        response = requests.get(url, timeout=10)
+        data = response.json()
+
+        quote = data.get("Global Quote", {})
+
+        return {
+            "symbol": symbol,
+            "price": quote.get("05. price", "N/A"),
+            "change": quote.get("09. change", "N/A"),
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@tool
+def purchase_stock(symbol: str, quantity: int) -> dict:
+    """
+    Simulate purchasing stock with Human-in-the-loop approval.
+    """
+
+    # Pause graph execution
+    decision = interrupt(
+        f"Approve purchase of {quantity} shares of {symbol}? (yes/no)"
+    )
+
+    if isinstance(decision, str) and decision.lower() == "yes":
+        return {
+            "status": "success",
+            "message": f"Purchased {quantity} shares of {symbol}"
+        }
+
+    return {
+        "status": "cancelled",
+        "message": f"Purchase cancelled for {symbol}"
+    }
+
+
+tools = [get_stock_price, purchase_stock]
+
+llm_with_tools = llm.bind_tools(tools)
+
+# -------------------------
+# 3. State
+# -------------------------
+
+class ChatState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+
+# -------------------------
+# 4. Nodes
+# -------------------------
+
+def chatbot_node(state: ChatState):
+    response = llm_with_tools.invoke(state["messages"])
+
+    return {
+        "messages": [response]
+    }
+
+
+tool_node = ToolNode(tools)
+
+# -------------------------
+# 5. Graph
+# -------------------------
+
+graph_builder = StateGraph(ChatState)
+
+graph_builder.add_node("chatbot", chatbot_node)
+graph_builder.add_node("tools", tool_node)
+
+graph_builder.add_edge(START, "chatbot")
+
+graph_builder.add_conditional_edges(
+    "chatbot",
+    tools_condition
+)
+
+graph_builder.add_edge("tools", "chatbot")
+
+# -------------------------
+# 6. Memory
+# -------------------------
+
+memory = MemorySaver()
+
+chatbot = graph_builder.compile(
+    checkpointer=memory
+)
+
+# -------------------------
+# 7. CLI
+# -------------------------
+
+if __name__ == "__main__":
+
+    thread_id = "demo-thread"
+
+    while True:
+
+        user_input = input("You: ")
+
+        if user_input.lower() in ["exit", "quit"]:
+            print("Goodbye!")
+            break
+
+        result = chatbot.invoke(
+            {
+                "messages": [
+                    HumanMessage(content=user_input)
+                ]
+            },
+            config={
+                "configurable": {
+                    "thread_id": thread_id
+                }
+            }
+        )
+
+        # Handle interrupts
+        if "__interrupt__" in result:
+
+            interrupt_data = result["__interrupt__"][0]
+
+            print(f"\nHITL: {interrupt_data.value}")
+
+            decision = input("Your decision: ")
+
+            result = chatbot.invoke(
+                Command(resume=decision),
+                config={
+                    "configurable": {
+                        "thread_id": thread_id
+                    }
+                }
+            )
+
+        # Print latest assistant message
+        last_message = result["messages"][-1]
+
+        if hasattr(last_message, "content"):
+            print(f"\nBot: {last_message.content}\n")
+        else:
+            print("\nBot responded.\n")
